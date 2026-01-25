@@ -172,6 +172,13 @@ class DynamicCIB:
         """
         A single discrete pathway across periods is simulated.
 
+        Threshold rules and cyclic descriptors:
+            - Cyclic transitions (if configured) are applied at the start of each new period
+              (except the first), evolving exogenous/inertial descriptors between periods.
+            - Threshold rules are evaluated after any cyclic transitions are applied, using
+              the resulting scenario state to determine the active CIM used for within-period
+              succession.
+
         Args:
             initial: Initial scenario as a descriptor -> state mapping.
             seed: Seed used for stochastic elements (cyclic transitions and tie breaks).
@@ -248,6 +255,10 @@ class DynamicCIB:
                     int(structural_seed_base) + int(period_idx)
                 )
 
+            # Threshold rules are evaluated to select the active CIM for this period.
+            # Note: for period_idx > 0, cyclic descriptors (if configured) have already
+            # advanced at the start of the period, so thresholds “see” the post-cyclic
+            # scenario state.
             matrix_t = self._apply_thresholds(matrix_period, current)
 
             op = succession_operator
