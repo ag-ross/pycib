@@ -49,6 +49,13 @@ Two additional mechanisms govern when and how the active CIM changes and how cer
 - **Threshold rules** conditionally modify the active CIM based on the current scenario (e.g. tipping points or policy regimes). A small disturbance can move the system across a threshold, which then changes the CIM and alters subsequent attractors.
 - **Cyclic descriptors** evolve via an explicit transition matrix between periods (often with strong persistence), representing exogenous drift or inertia that is not endogenously resolved by CIB within a period. These descriptors are “locked” during within-period succession so that their exogenous evolution is not overwritten.
 
+Threshold rule timing:
+
+- In `DynamicCIB.simulate_path()`, cyclic transitions (if configured) are applied at the start of each new period (t > 0), and threshold rules are then evaluated on the resulting (post-cyclic) scenario state to select the active period matrix used for within-period succession.
+- In `BranchingPathwayBuilder.build()`, threshold rules are evaluated on the parent scenario (period t) to construct the active CIM used for the transition into period t+1.
+
+These conventions are both valid; the key is to be explicit about which scenario state a threshold condition is evaluated against, especially when threshold conditions depend on cyclic descriptors.
+
 ### 6) What a “Monte Carlo run” is (and why it is a single path)
 
 A single Monte Carlo run produces one realised pathway \(z_{t_0}, z_{t_1}, \dots\) because one draw of the stochastic elements (judgement sampling, shocks, cyclic transitions) is made and then the pathway is advanced forward in time. The branching behaviour is not within a single run; it emerges across many runs. The distributional plots (probability bands, fan charts) are summaries of the ensemble.
@@ -239,7 +246,17 @@ The innovation \(u_{j,l}(t)\) is mean-zero with long-run scale \(\tau\). Common 
 When transformation pathways are constructed across sub-periods, two complementary modes are useful:
 
 - **Enumeration (enumeration-based branching)**: if the scenario space is small, all consistent scenarios for the active CIM in a sub-period are enumerated and treated as the scenario set for that period.
+  - Uses a deterministic base matrix for transitions (no judgement-uncertainty sampling, no structural shocks).
+  - Transition probabilities are exact (uniform over enumerated consistent scenarios, per parent).
+
 - **Sampling (Monte Carlo)**: if the scenario space is large, the reachable scenario set and transition probabilities are approximated by repeated random restarts, uncertainty/shock sampling, and succession.
+  - Respects judgement uncertainty (`judgment_sigma_scale_by_period`) and structural shocks (`structural_sigma`) when configured.
+  - Transition probabilities are estimated from counts and converge with more samples.
+
+Important:
+
+- Enumeration is used when scenario space size is <= `max_states_to_enumerate`; sampling is used otherwise.
+- If you set `structural_sigma` and/or `judgment_sigma_scale_by_period` but enumeration mode is selected, those parameters are ignored by design. To ensure uncertainty is applied, decrease `max_states_to_enumerate` to force sampling mode.
 
 The hybrid “enumerate-or-sample” approach uses enumeration when feasible and otherwise sampling, yielding a branching pathway graph with weighted edges between consecutive periods.
 
