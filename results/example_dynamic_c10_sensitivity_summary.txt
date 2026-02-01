@@ -1,0 +1,68 @@
+DATASET_C10: sensitivity and diagnostics summary
+Runs: 400
+Near-miss rate (base CIM, epsilon=0.25): 1.0000
+
+Rare-outcome warnings:
+
+Top importances (first 5 outcomes shown):
+
+Outcome: transition:hamming_flips_total
+  - any_threshold_applied: 0.161788  (CI [-0.040939, 0.588575])
+  - init:Policy_Stringency=Medium: 0  (CI [0, 0])
+  - init:Renewables_Deployment=Moderate: 0  (CI [0, 0])
+  - init:Grid_Flexibility=Medium: 0  (CI [0, 0])
+  - init:Fossil_Price_Level=Medium: 0  (CI [0, 0])
+  - init:Investment_Level=Medium: 0  (CI [0, 0])
+  - init:Electrification_Demand=Low: -0.00171846  (CI [-0.125383, 0])
+  - init:Electrification_Demand=Medium: -0.00205219  (CI [-0.131546, 0])
+
+Outcome: final_numeric:Electrification_Demand
+  - any_threshold_applied: 1.13213e-05  (CI [-0.000160705, 0.000247945])
+  - init:Policy_Stringency=Medium: 0  (CI [0, 0])
+  - init:Renewables_Deployment=Moderate: 0  (CI [0, 0])
+  - init:Grid_Flexibility=Medium: 0  (CI [0, 0])
+  - init:Fossil_Price_Level=Medium: 0  (CI [0, 0])
+  - init:Investment_Level=Medium: 0  (CI [0, 0])
+  - init:Electrification_Demand=Medium: -9.47082e-07  (CI [-0.000113944, 0])
+  - init:Electrification_Demand=Low: -1.18867e-06  (CI [-0.000153041, 0])
+
+Outcome: final:Electrification_Demand=High
+  - final:Renewables_Deployment=Slow: 0.0113721  (CI [-0.00141285, 0.0385653])
+  - final:Renewables_Deployment=Fast: 0.0111577  (CI [0.000527649, 0.032377])
+  - final:Fossil_Price_Level=High: 0.00965173  (CI [-0.000762483, 0.0348709])
+  - init:Public_Acceptance=Medium: 0.00323102  (CI [-0.00102167, 0.0157432])
+  - final:Policy_Stringency=Medium: 0.00313046  (CI [-0.00218402, 0.0182365])
+  - init:Public_Acceptance=High: 0.00308904  (CI [-0.000197496, 0.0143182])
+  - final:Fossil_Price_Level=Medium: 0.0026792  (CI [-0.00238958, 0.0220195])
+  - final:Policy_Stringency=High: 0.00248261  (CI [-0.00117793, 0.0210451])
+
+Outcome: final:Electrification_Demand=Low
+  - init:Storage_Capacity=Moderate: 0.0309367  (CI [-0.00357646, 0.0932602])
+  - init:Storage_Capacity=Limited: 0.0242135  (CI [-0.00373645, 0.0785536])
+  - init:Storage_Capacity=Extensive: 0.0210866  (CI [-0.00304955, 0.0686815])
+  - final:Renewables_Deployment=Slow: 0.0159596  (CI [0.000233759, 0.0522713])
+  - init:Electrification_Demand=Medium: 0.0142404  (CI [-0.00297601, 0.0579019])
+  - any_threshold_applied: 0.0113139  (CI [-0.000676008, 0.0654777])
+  - final:Renewables_Deployment=Fast: 0.0076064  (CI [-0.00181694, 0.0308642])
+  - final:Policy_Stringency=Low: 0.00701847  (CI [-0.00112178, 0.0409158])
+
+Outcome: final:Electrification_Demand=Medium
+  - final:Policy_Stringency=High: 0.00557447  (CI [-0.000462543, 0.027839])
+  - any_threshold_applied: 0.00513019  (CI [-0.000991186, 0.0339811])
+  - final:Fossil_Price_Level=High: 0.00207044  (CI [-0.000889926, 0.016988])
+  - final:Policy_Stringency=Low: 0.00178227  (CI [-0.00169278, 0.0183004])
+  - final:Policy_Stringency=Medium: 0.00165585  (CI [-0.00154793, 0.0161492])
+  - init:Storage_Capacity=Limited: 0.00135041  (CI [-0.0020598, 0.0931745])
+  - init:Storage_Capacity=Extensive: 0.00124339  (CI [-0.00309683, 0.0378678])
+  - init:Regulatory_Framework=Strong: 0.00121366  (CI [-0.00233346, 0.0140876])
+
+Attribution example (illustrative, base CIM):
+Min margin to switching: -7
+Descriptor: Electrification_Demand
+  Margin to switching: -7
+  Flip candidates (top 5, single-cell, clipped to [-3, +3]):
+    - decrease_chosen_cell for Renewables_Deployment[Fast] (Medium vs High): required=0, available=3, feasible=False
+    - decrease_chosen_cell for Grid_Flexibility[High] (Medium vs High): required=0, available=3, feasible=False
+    - decrease_chosen_cell for Fossil_Price_Level[High] (Medium vs High): required=0, available=3, feasible=False
+    - decrease_chosen_cell for Policy_Stringency[High] (Medium vs High): required=0, available=3, feasible=False
+    - decrease_chosen_cell for Regulatory_Framework[Strong] (Medium vs High): required=0, available=3, feasible=False
