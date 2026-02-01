@@ -47,6 +47,7 @@ class TestScenarioDiagnostics:
         d = scenario_diagnostics(s, m)
         assert d.is_consistent is True
         assert d.consistency_margin >= 0.0
+        assert d.consistency_margin == 4.0
 
     def test_inconsistent_scenario_has_negative_margin(self) -> None:
         m = _simple_matrix()

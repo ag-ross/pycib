@@ -116,3 +116,37 @@ class TestBranchingPathwayBuilder:
         for s in r.scenarios_by_period[1]:
             assert ConsistencyChecker.check_consistency(s, m) is True
 
+    def test_per_parent_topk_pruning_reduces_branching(self) -> None:
+        m = _coordination_matrix()
+        b = BranchingPathwayBuilder(
+            base_matrix=m,
+            periods=[1, 2],
+            initial={"A": "Low", "B": "High"},
+            max_states_to_enumerate=10_000,
+            n_transition_samples=50,
+            prune_policy="per_parent_topk",
+            per_parent_top_k=1,
+            base_seed=123,
+        )
+        r = b.build(top_k=5)
+        out = r.edges[(0, 0)]
+        assert len(out) == 1
+        assert abs(sum(out.values()) - 1.0) < 1e-9
+
+    def test_min_edge_weight_pruning_falls_back_when_all_removed(self) -> None:
+        m = _coordination_matrix()
+        b = BranchingPathwayBuilder(
+            base_matrix=m,
+            periods=[1, 2],
+            initial={"A": "Low", "B": "High"},
+            max_states_to_enumerate=10_000,
+            n_transition_samples=50,
+            prune_policy="min_edge_weight",
+            min_edge_weight=0.9,
+            base_seed=123,
+        )
+        r = b.build(top_k=5)
+        out = r.edges[(0, 0)]
+        assert len(out) == 1
+        assert abs(sum(out.values()) - 1.0) < 1e-9
+

@@ -130,6 +130,49 @@ class TestDynamicCIB:
         assert ConsistencyChecker.check_consistency(equilibrium, m) is True
         assert ConsistencyChecker.check_consistency(realised, m) is False
 
+    def test_simulate_path_can_collect_diagnostics(self) -> None:
+        descriptors = {"A": ["Low", "High"], "B": ["Low", "High"]}
+        m = CIBMatrix(descriptors)
+        m.set_impact("A", "Low", "B", "Low", 2.0)
+        m.set_impact("A", "Low", "B", "High", -2.0)
+        m.set_impact("B", "Low", "A", "Low", 2.0)
+        m.set_impact("B", "Low", "A", "High", -2.0)
+
+        dyn = DynamicCIB(m, periods=[1, 2, 3])
+        diag = {}
+        path = dyn.simulate_path(initial={"A": "Low", "B": "Low"}, seed=123, diagnostics=diag)
+        assert len(path.scenarios) == 3
+        assert len(diag.get("iterations", [])) == 3
+        assert len(diag.get("is_cycle", [])) == 3
+        assert "threshold_rules_applied" not in diag
+
+    def test_simulate_path_records_threshold_applications(self) -> None:
+        descriptors = {"A": ["Low", "High"], "B": ["Low", "High"]}
+        m = CIBMatrix(descriptors)
+
+        def modifier(base: CIBMatrix) -> CIBMatrix:
+            out = CIBMatrix(base.descriptors)
+            out.set_impacts(dict(base.iter_impacts()))
+            out.set_impact("A", "High", "B", "Low", -3.0)
+            out.set_impact("A", "High", "B", "High", 3.0)
+            return out
+
+        dyn = DynamicCIB(m, periods=[1, 2])
+        dyn.add_threshold_rule(
+            ThresholdRule(
+                name="IfAHighBoostBHigh",
+                condition=lambda s: s.get_state("A") == "High",
+                modifier=modifier,
+            )
+        )
+
+        diag = {}
+        _ = dyn.simulate_path(initial={"A": "High", "B": "Low"}, seed=123, diagnostics=diag)
+        applied = diag.get("threshold_rules_applied")
+        assert isinstance(applied, list)
+        assert len(applied) == 2
+        assert applied[0] == ["IfAHighBoostBHigh"]
+
     def test_dataset_b5_demo_path_shapes(self) -> None:
         """
         Smoke-check the canonical 5-state demo wiring.
