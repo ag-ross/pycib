@@ -9,11 +9,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import product
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
 from cib.core import CIBMatrix, ConsistencyChecker, Scenario
+from cib.constraints import ConstraintIndex, ConstraintSpec
 
 # Imports for Monte Carlo are attempted.
 try:
@@ -76,6 +77,7 @@ class ScenarioAnalyzer:
         n_restarts: int = 200,
         seed: Optional[int] = None,
         max_iterations: int = 1000,
+        constraints: Optional[Sequence[ConstraintSpec]] = None,
     ) -> List[Scenario]:
         """
         Find all consistent scenarios in the system.
@@ -112,12 +114,13 @@ class ScenarioAnalyzer:
 
         if can_enumerate:
             all_scenarios = self.enumerate_scenarios()
-            return self.filter_consistent(all_scenarios)
+            return self.filter_consistent(all_scenarios, constraints=constraints)
 
         return self.find_consistent_via_random_restarts(
             n_restarts=n_restarts,
             seed=seed,
             max_iterations=max_iterations,
+            constraints=constraints,
         )
 
     def find_consistent_via_random_restarts(
@@ -125,6 +128,7 @@ class ScenarioAnalyzer:
         n_restarts: int = 200,
         seed: Optional[int] = None,
         max_iterations: int = 1000,
+        constraints: Optional[Sequence[ConstraintSpec]] = None,
     ) -> List[Scenario]:
         """
         Find a shortlist of consistent scenarios via succession random restarts.
@@ -143,6 +147,7 @@ class ScenarioAnalyzer:
 
         consistent: List[Scenario] = []
         seen: set[Scenario] = set()
+        cidx = ConstraintIndex.from_specs(self.matrix, constraints)
         for res in results:
             if res.is_cycle:
                 continue
@@ -150,6 +155,8 @@ class ScenarioAnalyzer:
             if not isinstance(attractor, Scenario):
                 continue
             if attractor in seen:
+                continue
+            if cidx is not None and not bool(cidx.is_full_valid(attractor.to_indices())):
                 continue
             if ConsistencyChecker.check_consistency(attractor, self.matrix):
                 consistent.append(attractor)
@@ -204,8 +211,53 @@ class ScenarioAnalyzer:
             unique.setdefault(key, res)
         return list(unique.values())
 
+    def find_attractors_monte_carlo(
+        self,
+        *,
+        config=None,
+    ):
+        """
+        Find attractors and estimate weights via Monte Carlo sampling.
+
+        This method is intended for large scenario spaces where complete
+        enumeration is infeasible.
+        """
+        from cib.solvers.config import MonteCarloAttractorConfig
+        from cib.solvers.monte_carlo_attractors import (
+            MonteCarloAttractorResult,
+            find_attractors_monte_carlo,
+        )
+
+        cfg = config if config is not None else MonteCarloAttractorConfig()
+        if not isinstance(cfg, MonteCarloAttractorConfig):
+            raise ValueError("config must be a MonteCarloAttractorConfig")
+        res: MonteCarloAttractorResult = find_attractors_monte_carlo(
+            matrix=self.matrix, config=cfg
+        )
+        return res
+
+    def find_all_consistent_exact(
+        self,
+        *,
+        config=None,
+    ):
+        """
+        Enumerate all consistent scenarios using a pruned exact solver.
+        """
+        from cib.solvers.config import ExactSolverConfig
+        from cib.solvers.exact_pruned import ExactSolverResult, find_all_consistent_exact
+
+        cfg = config if config is not None else ExactSolverConfig()
+        if not isinstance(cfg, ExactSolverConfig):
+            raise ValueError("config must be an ExactSolverConfig")
+        res: ExactSolverResult = find_all_consistent_exact(matrix=self.matrix, config=cfg)
+        return res
+
     def filter_consistent(
-        self, candidates: List[Scenario]
+        self,
+        candidates: List[Scenario],
+        *,
+        constraints: Optional[Sequence[ConstraintSpec]] = None,
     ) -> List[Scenario]:
         """
         Filter consistent scenarios from a candidate list.
@@ -217,7 +269,10 @@ class ScenarioAnalyzer:
             List of scenarios that are consistent.
         """
         consistent: List[Scenario] = []
+        cidx = ConstraintIndex.from_specs(self.matrix, constraints)
         for scenario in candidates:
+            if cidx is not None and not bool(cidx.is_full_valid(scenario.to_indices())):
+                continue
             if ConsistencyChecker.check_consistency(scenario, self.matrix):
                 consistent.append(scenario)
 

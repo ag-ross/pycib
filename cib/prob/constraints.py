@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, Mapping, Optional, Tuple
 
 from cib.prob.types import FactorSpec
+from cib.prob.fit_report import FeasibilityAdjustment
 
 
 Marginals = Mapping[str, Mapping[str, float]]
@@ -134,4 +135,63 @@ def pairwise_target_frechet_violations(
         if v < lo - tol or v > hi + tol:
             out[(i, a, j, b)] = (float(v), float(lo), float(hi))
     return out
+
+
+def project_pairwise_targets_to_frechet_bounds(
+    marginals: Marginals,
+    targets: Mapping[Tuple[str, str, str, str], float],
+    *,
+    tol: float = 1e-9,
+) -> Tuple[Dict[Tuple[str, str, str, str], float], Tuple[FeasibilityAdjustment, ...]]:
+    """
+    Project pairwise targets into Fréchet-feasible intervals.
+
+    This helper is intended for a "repair" feasibility mode, where incoherent
+    multiplier-implied targets are adjusted (clipped) rather than rejected.
+
+    Adjustments are returned so that the applied changes can be audited.
+    """
+    tol = float(tol)
+    adjusted: Dict[Tuple[str, str, str, str], float] = {}
+    adjustments: list[FeasibilityAdjustment] = []
+
+    for (i, a, j, b), pij in targets.items():
+        pi = float(marginals[i][a])
+        pj = float(marginals[j][b])
+        lo, hi = frechet_bounds(pi, pj)
+        v = float(pij)
+        if v < lo - tol:
+            v_adj = float(lo)
+            adjustments.append(
+                FeasibilityAdjustment(
+                    i=str(i),
+                    a=str(a),
+                    j=str(j),
+                    b=str(b),
+                    original_value=float(v),
+                    adjusted_value=float(v_adj),
+                    frechet_lower=float(lo),
+                    frechet_upper=float(hi),
+                )
+            )
+            adjusted[(str(i), str(a), str(j), str(b))] = float(v_adj)
+        elif v > hi + tol:
+            v_adj = float(hi)
+            adjustments.append(
+                FeasibilityAdjustment(
+                    i=str(i),
+                    a=str(a),
+                    j=str(j),
+                    b=str(b),
+                    original_value=float(v),
+                    adjusted_value=float(v_adj),
+                    frechet_lower=float(lo),
+                    frechet_upper=float(hi),
+                )
+            )
+            adjusted[(str(i), str(a), str(j), str(b))] = float(v_adj)
+        else:
+            adjusted[(str(i), str(a), str(j), str(b))] = float(v)
+
+    return adjusted, tuple(adjustments)
 

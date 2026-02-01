@@ -8,11 +8,17 @@ import numpy as np
 from cib.prob.constraints import (
     Marginals,
     Multipliers,
+    multiplier_normalization_issues,
     multiplier_pairwise_targets,
     pairwise_target_frechet_violations,
     validate_marginals,
 )
+from cib.prob.approx import ApproxJointDistribution
 from cib.prob.fit_direct import fit_joint_direct
+from cib.prob.fit_iterative import fit_joint_iterative
+from cib.prob.fit_report import FitReport
+from cib.prob.graph import RelevanceSpec, relevance_weight
+from cib.prob.risk_bounds import RiskBoundsResult, event_probability_bounds
 from cib.prob.types import AssignmentLike, FactorSpec, ScenarioIndex
 
 
@@ -24,6 +30,7 @@ class JointDistribution:
 
     index: ScenarioIndex
     p: np.ndarray  # shape (index.size,)
+    fit_report: Optional[FitReport] = None
 
     def __post_init__(self) -> None:
         if self.p.ndim != 1:
@@ -82,6 +89,9 @@ class ProbabilisticCIAModel:
         factors: Sequence[FactorSpec],
         marginals: Marginals,
         multipliers: Optional[Multipliers] = None,
+        feasibility_mode: str = "strict",
+        feasibility_tol: float = 1e-9,
+        enforce_multiplier_normalisation: bool = False,
     ) -> None:
         if not factors:
             raise ValueError("factors cannot be empty")
@@ -89,20 +99,36 @@ class ProbabilisticCIAModel:
         self.index = ScenarioIndex(self.factors)
         self.marginals: Marginals = marginals
         self.multipliers: Multipliers = multipliers or {}
+        self.feasibility_mode = str(feasibility_mode).strip().lower()
+        self.feasibility_tol = float(feasibility_tol)
+        self.enforce_multiplier_normalisation = bool(enforce_multiplier_normalisation)
 
         validate_marginals(self.factors, self.marginals)
-        # A soft pre-check is performed: Fréchet violations typically indicate infeasible constraints.
-        targets = multiplier_pairwise_targets(self.marginals, self.multipliers)
-        violations = pairwise_target_frechet_violations(self.marginals, targets)
-        if violations:
-            # This check is kept strict to protect users from impossible inputs.
-            # If a "soft constraint" mode is desired later, this can be relaxed.
-            k = next(iter(violations.keys()))
-            v, lo, hi = violations[k]
-            raise ValueError(
-                "Multiplier-implied pairwise target violates Fréchet bounds: "
-                f"{k!r} has {v}, but bounds are [{lo}, {hi}]"
+        if self.feasibility_mode not in {"strict", "repair"}:
+            raise ValueError(f"Unknown feasibility_mode: {self.feasibility_mode!r}")
+
+        if self.feasibility_mode == "strict":
+            # A strict pre-check is performed: Fréchet violations indicate incoherent constraints.
+            targets = multiplier_pairwise_targets(self.marginals, self.multipliers)
+            violations = pairwise_target_frechet_violations(
+                self.marginals, targets, tol=float(self.feasibility_tol)
             )
+            if violations:
+                k = next(iter(violations.keys()))
+                v, lo, hi = violations[k]
+                raise ValueError(
+                    "Multiplier-implied pairwise target violates Fréchet bounds: "
+                    f"{k!r} has {v}, but bounds are [{lo}, {hi}]"
+                )
+
+        if self.enforce_multiplier_normalisation:
+            issues = multiplier_normalization_issues(self.factors, self.marginals, self.multipliers)
+            if issues:
+                first = issues[0]
+                raise ValueError(
+                    "Multiplier normalisation constraint is violated for at least one context: "
+                    f"(i={first.i!r}, j={first.j!r}, given_outcome={first.given_outcome!r})"
+                )
 
     def fit_joint(
         self,
@@ -110,33 +136,129 @@ class ProbabilisticCIAModel:
         method: str = "direct",
         max_scenarios: int = 20_000,
         kl_weight: float = 0.0,
+        kl_baseline: Optional[np.ndarray] = None,
+        kl_baseline_eps: float = 0.0,
+        relevance: Optional[RelevanceSpec] = None,
+        relevance_default_weight: float = 0.0,
         weight_by_target: bool = True,
         random_seed: Optional[int] = None,
         solver_maxiter: int = 2_000,
-    ) -> JointDistribution:
+        iterative_burn_in_sweeps: int = 2_000,
+        iterative_n_samples: int = 10_000,
+        iterative_thinning: int = 5,
+        iterative_eps: float = 1e-15,
+        with_report: bool = False,
+    ) -> Union[JointDistribution, ApproxJointDistribution]:
         method = str(method).strip().lower()
         if method not in {"direct", "iterative"}:
             raise ValueError(f"Unknown method: {method!r}")
 
-        if self.index.size > int(max_scenarios):
+        if method == "direct" and self.index.size > int(max_scenarios):
             raise ValueError(
                 f"Scenario space too large for dense fit (size={self.index.size}, "
                 f"max_scenarios={int(max_scenarios)})."
             )
 
+        rel_map: Optional[Dict[Tuple[str, str], float]] = None
+        if relevance is not None:
+            rel_map = {}
+            for (i_a, j_b), _m in self.multipliers.items():
+                (i, _a) = i_a
+                (j, _b) = j_b
+                rel_map[(str(i), str(j))] = float(
+                    relevance_weight(
+                        child=str(i),
+                        parent=str(j),
+                        spec=relevance,
+                        default_weight=float(relevance_default_weight),
+                    )
+                )
+
         if method == "iterative":
-            # In Phase-1 implementation, iterative methods are only meaningful for large spaces.
-            # Direct methods are used in the small-space regime.
-            method = "direct"
+            if with_report:
+                dist, _report = fit_joint_iterative(
+                    index=self.index,
+                    marginals=self.marginals,
+                    multipliers=self.multipliers,
+                    relevance_weights=rel_map,
+                    random_seed=random_seed,
+                    burn_in_sweeps=int(iterative_burn_in_sweeps),
+                    n_samples=int(iterative_n_samples),
+                    thinning=int(iterative_thinning),
+                    eps=float(iterative_eps),
+                    with_report=True,
+                )
+                # fit_joint_iterative returns the report separately; the distribution is already populated.
+                return dist
+
+            return fit_joint_iterative(
+                index=self.index,
+                marginals=self.marginals,
+                multipliers=self.multipliers,
+                relevance_weights=rel_map,
+                random_seed=random_seed,
+                burn_in_sweeps=int(iterative_burn_in_sweeps),
+                n_samples=int(iterative_n_samples),
+                thinning=int(iterative_thinning),
+                eps=float(iterative_eps),
+                with_report=False,
+            )
+
+        if with_report:
+            p, report = fit_joint_direct(
+                index=self.index,
+                marginals=self.marginals,
+                multipliers=self.multipliers,
+                kl_weight=float(kl_weight),
+                kl_baseline=kl_baseline,
+                kl_baseline_eps=float(kl_baseline_eps),
+                feasibility_mode=self.feasibility_mode,
+                feasibility_tol=float(self.feasibility_tol),
+                relevance_weights=rel_map,
+                weight_by_target=bool(weight_by_target),
+                random_seed=random_seed,
+                solver_maxiter=int(solver_maxiter),
+                return_report=True,
+            )
+            return JointDistribution(index=self.index, p=p, fit_report=report)
 
         p = fit_joint_direct(
             index=self.index,
             marginals=self.marginals,
             multipliers=self.multipliers,
             kl_weight=float(kl_weight),
+            kl_baseline=kl_baseline,
+            kl_baseline_eps=float(kl_baseline_eps),
+            feasibility_mode=self.feasibility_mode,
+            feasibility_tol=float(self.feasibility_tol),
+            relevance_weights=rel_map,
             weight_by_target=bool(weight_by_target),
             random_seed=random_seed,
             solver_maxiter=int(solver_maxiter),
+            return_report=False,
         )
-        return JointDistribution(index=self.index, p=p)
+        return JointDistribution(index=self.index, p=p, fit_report=None)
+
+    def event_probability_bounds(
+        self,
+        *,
+        event: Mapping[str, str],
+        include_pairwise_targets: bool = True,
+        max_scenarios: int = 50_000,
+    ) -> RiskBoundsResult:
+        """
+        Return identification bounds on P(event) under the configured constraint set.
+
+        This method is intended for small scenario spaces and uses dense linear programming.
+        """
+        return event_probability_bounds(
+            factors=self.factors,
+            marginals=self.marginals,
+            multipliers=self.multipliers,
+            event=event,
+            include_pairwise_targets=bool(include_pairwise_targets),
+            feasibility_mode=self.feasibility_mode,
+            feasibility_tol=float(self.feasibility_tol),
+            max_scenarios=int(max_scenarios),
+        )
 

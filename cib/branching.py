@@ -94,6 +94,55 @@ def _enumerate_consistent_with_locks(
     return out
 
 
+def _prune_distribution(
+    dist: Mapping[Scenario, float],
+    *,
+    prune_policy: str,
+    per_parent_top_k: Optional[int],
+    min_edge_weight: Optional[float],
+) -> Dict[Scenario, float]:
+    """
+    An edge-pruning policy is applied to a single parent's outgoing distribution.
+    """
+    out = {k: float(v) for k, v in dist.items() if float(v) > 0.0}
+    if not out:
+        return {}
+
+    if prune_policy == "incoming_mass":
+        # No per-parent pruning is applied for this policy.
+        pass
+    elif prune_policy == "per_parent_topk":
+        if per_parent_top_k is None or int(per_parent_top_k) <= 0:
+            raise ValueError("per_parent_top_k must be positive for prune_policy='per_parent_topk'")
+        k = int(per_parent_top_k)
+        kept = sorted(
+            out.items(),
+            key=lambda kv: (float(kv[1]), tuple(kv[0].to_indices())),
+            reverse=True,
+        )[:k]
+        out = {s: w for s, w in kept}
+    elif prune_policy == "min_edge_weight":
+        if min_edge_weight is None or float(min_edge_weight) < 0.0:
+            raise ValueError("min_edge_weight must be non-negative for prune_policy='min_edge_weight'")
+        thr = float(min_edge_weight)
+        out = {s: w for s, w in out.items() if float(w) >= thr}
+    else:
+        raise ValueError(
+            "prune_policy must be 'incoming_mass', 'per_parent_topk', or 'min_edge_weight'"
+        )
+
+    if not out:
+        # A fallback is used so that graph connectivity is preserved.
+        best = max(dist.items(), key=lambda kv: (float(kv[1]), tuple(kv[0].to_indices())))[0]
+        return {best: 1.0}
+
+    s = float(sum(out.values()))
+    if s <= 0.0:
+        best = max(out.items(), key=lambda kv: (float(kv[1]), tuple(kv[0].to_indices())))[0]
+        return {best: 1.0}
+    return {k: float(v) / s for k, v in out.items()}
+
+
 class BranchingPathwayBuilder:
     """
     Build a per-period branching pathway graph.
@@ -136,6 +185,9 @@ class BranchingPathwayBuilder:
         max_states_to_enumerate: int = 20_000,
         n_transition_samples: int = 200,
         max_nodes_per_period: Optional[int] = None,
+        prune_policy: Literal["incoming_mass", "per_parent_topk", "min_edge_weight"] = "incoming_mass",
+        per_parent_top_k: Optional[int] = None,
+        min_edge_weight: Optional[float] = None,
         base_seed: int = 123,
         # Optional uncertainty/shock settings are provided for sampling transitions.
         structural_sigma: Optional[float] = None,
@@ -163,6 +215,12 @@ class BranchingPathwayBuilder:
             max_states_to_enumerate: Maximum scenario space size allowed for enumeration mode.
             n_transition_samples: Number of transition samples used in sampling mode.
             max_nodes_per_period: Optional cap used to prune each period layer for readability.
+            prune_policy: Pruning policy applied to each parent's outgoing edge distribution.
+                When set to "incoming_mass", only layer-level pruning (if configured) is applied.
+                When set to "per_parent_topk", the top-K outgoing edges are kept per parent.
+                When set to "min_edge_weight", edges below the given threshold are removed.
+            per_parent_top_k: Number of outgoing edges kept per parent when prune_policy is "per_parent_topk".
+            min_edge_weight: Minimum edge weight kept when prune_policy is "min_edge_weight".
             base_seed: Base seed used for reproducible sampling.
             structural_sigma: Optional structural shock magnitude applied to sampled matrices.
                 Note: only used in sampling mode; ignored in enumeration mode.
@@ -188,6 +246,12 @@ class BranchingPathwayBuilder:
             raise ValueError("max_nodes_per_period must be positive when provided")
         if node_mode not in {"equilibrium", "realized"}:
             raise ValueError("node_mode must be 'equilibrium' or 'realized'")
+        if prune_policy not in {"incoming_mass", "per_parent_topk", "min_edge_weight"}:
+            raise ValueError("prune_policy is not recognised")
+        if prune_policy == "per_parent_topk" and (per_parent_top_k is None or int(per_parent_top_k) <= 0):
+            raise ValueError("per_parent_top_k must be positive for prune_policy='per_parent_topk'")
+        if prune_policy == "min_edge_weight" and (min_edge_weight is None or float(min_edge_weight) < 0.0):
+            raise ValueError("min_edge_weight must be non-negative for prune_policy='min_edge_weight'")
 
         self.base_matrix = base_matrix
         self.periods = [int(t) for t in periods]
@@ -202,6 +266,9 @@ class BranchingPathwayBuilder:
         self.max_states_to_enumerate = int(max_states_to_enumerate)
         self.n_transition_samples = int(n_transition_samples)
         self.max_nodes_per_period = int(max_nodes_per_period) if max_nodes_per_period is not None else None
+        self.prune_policy = str(prune_policy)
+        self.per_parent_top_k = int(per_parent_top_k) if per_parent_top_k is not None else None
+        self.min_edge_weight = float(min_edge_weight) if min_edge_weight is not None else None
         self.base_seed = int(base_seed)
 
         self.structural_sigma = structural_sigma
@@ -385,17 +452,24 @@ class BranchingPathwayBuilder:
                         candidates = [chosen]
 
                     w = 1.0 / float(len(candidates))
+                    dist_s: Dict[Scenario, float] = {c: w for c in candidates}
+                    dist_s = _prune_distribution(
+                        dist_s,
+                        prune_policy=self.prune_policy,
+                        per_parent_top_k=self.per_parent_top_k,
+                        min_edge_weight=self.min_edge_weight,
+                    )
                     out: Dict[int, float] = {}
-                    for c in candidates:
+                    for c, ww in dist_s.items():
                         if c not in next_index:
                             next_index[c] = len(next_nodes)
                             next_nodes.append(c)
-                        out[next_index[c]] = out.get(next_index[c], 0.0) + w
+                        out[next_index[c]] = out.get(next_index[c], 0.0) + float(ww)
                     edges[(p_idx, src_idx)] = out
                     continue
 
                 # Sampling mode: transition distribution is estimated by Monte Carlo.
-                counts: Dict[int, int] = {}
+                counts_s: Dict[Scenario, int] = {}
                 for m in range(self.n_transition_samples):
                     seeds = seeds_for_run(self.base_seed + 1000 * p_idx + 17 * src_idx, m)
                     rng = np.random.default_rng(int(seeds["dynamic_shock_seed"]))
@@ -432,13 +506,23 @@ class BranchingPathwayBuilder:
                         dynamic_shocks=dyn_shocks,
                     )
 
+                    counts_s[child] = counts_s.get(child, 0) + 1
+
+                total = float(sum(counts_s.values()) or 1.0)
+                dist_s = {s: float(c) / total for s, c in counts_s.items()}
+                dist_s = _prune_distribution(
+                    dist_s,
+                    prune_policy=self.prune_policy,
+                    per_parent_top_k=self.per_parent_top_k,
+                    min_edge_weight=self.min_edge_weight,
+                )
+                out: Dict[int, float] = {}
+                for child, ww in dist_s.items():
                     if child not in next_index:
                         next_index[child] = len(next_nodes)
                         next_nodes.append(child)
-                    counts[next_index[child]] = counts.get(next_index[child], 0) + 1
-
-                total = float(sum(counts.values()) or 1.0)
-                edges[(p_idx, src_idx)] = {k: v / total for k, v in counts.items()}
+                    out[next_index[child]] = out.get(next_index[child], 0.0) + float(ww)
+                edges[(p_idx, src_idx)] = out
 
             # Optional layer-level pruning is performed to prevent node explosion.
             if self.max_nodes_per_period is not None and len(next_nodes) > self.max_nodes_per_period:

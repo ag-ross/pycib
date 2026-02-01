@@ -2,8 +2,10 @@
 Self-contained, workshop-aligned example data for Cross-Impact Balance (CIB).
 
 This module provides:
-  - A single canonical demo dataset (Energy Transition, 5 descriptors × 5 states),
+  - DATASET_B5: Canonical demo dataset (Energy Transition, 5 descriptors × 5 states),
     deterministically expanded from a compact influence spec at import time.
+  - DATASET_C10: Workshop-scale example (Energy Transition, 10 descriptors × 3 states),
+    aligned with published CIB practice (typically 8-12 descriptors with 2-4 states).
   - Reference seeded generators for:
       - judgment-uncertainty sampling,
       - structural shocks,
@@ -17,6 +19,10 @@ from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Uni
 import numpy as np
 
 ImpactKey = Tuple[str, str, str, str]  # (src_descriptor, src_state, tgt_descriptor, tgt_state)
+
+
+# A default set of period labels is provided for multi-period examples.
+DEFAULT_PERIODS: Tuple[int, ...] = (2025, 2030, 2035, 2040, 2045)
 
 
 # ---------------------------
@@ -582,12 +588,11 @@ def dataset_b_modifier_boost_policy_to_renewables(matrix):
         raise ValueError("matrix must be a CIBMatrix")
 
     out = CIBMatrix(matrix.descriptors)
-    out.set_impacts(dict(matrix._impacts))  # type: ignore[attr-defined]
+    out.set_impacts(dict(matrix.iter_impacts()))
 
     def _bump(src_desc: str, src_state: str, tgt_desc: str, delta: float) -> None:
         for tgt_state in out.descriptors[tgt_desc]:
-            key = (src_desc, src_state, tgt_desc, tgt_state)
-            base = out._impacts.get(key, 0.0)  # type: ignore[attr-defined]
+            base = out.get_impact(src_desc, src_state, tgt_desc, tgt_state)
             states = out.descriptors[tgt_desc]
             hi = states[-1]
             lo = states[0]
@@ -604,7 +609,10 @@ def dataset_b_modifier_boost_policy_to_renewables(matrix):
                 new = base - 0.5 * abs(delta)
             else:
                 new = base
-            out._impacts[key] = float(_np.clip(new, -3.0, 3.0))  # type: ignore[attr-defined]
+            clipped = float(_np.clip(new, -3.0, 3.0))
+            if _np.isclose(clipped, float(base)):
+                continue
+            out.set_impact(src_desc, src_state, tgt_desc, tgt_state, clipped)
 
     # Stronger policy and higher grid flexibility push towards faster renewables and higher electrification.
     # The bump is applied at the highest (and, for >=4 states, second-highest) source levels,
@@ -635,6 +643,481 @@ def dataset_b_threshold_rule_fast_permitting():
     raise RuntimeError(
         "DATASET_B_* has been removed. Use dataset_b5_threshold_rule_fast_permitting()."
     )
+
+
+# -----------------------------------------
+# Dataset C10 (10 descriptors × 3 states - workshop-scale example)
+# -----------------------------------------
+#
+# Rationale: A workshop-scale example aligned with published CIB practice
+# (typically 8-12 descriptors with 2-4 states) is provided. Scaling to a larger system
+# whilst interpretability is maintained is demonstrated.
+#
+# Total scenario space: 3^10 = 59,049 scenarios (manageable with Monte Carlo methods).
+
+DATASET_C10_DESCRIPTORS: Dict[str, List[str]] = {
+    "Policy_Stringency": ["Low", "Medium", "High"],
+    "Regulatory_Framework": ["Weak", "Moderate", "Strong"],
+    "Renewables_Deployment": ["Slow", "Moderate", "Fast"],
+    "Grid_Flexibility": ["Low", "Medium", "High"],
+    "Storage_Capacity": ["Limited", "Moderate", "Extensive"],
+    "Fossil_Price_Level": ["Low", "Medium", "High"],
+    "Investment_Level": ["Low", "Medium", "High"],
+    "Technology_Costs": ["High", "Moderate", "Low"],
+    "Electrification_Demand": ["Low", "Medium", "High"],
+    "Public_Acceptance": ["Low", "Medium", "High"],
+}
+
+# Compact workshop relationships (direction/strength/confidence) are defined.
+# Not all descriptor pairs have direct relationships (a sparse structure is used).
+DATASET_C10_INFLUENCE_SPEC: List[Tuple[str, str, str, int, int]] = [
+    # Policy impacts are defined.
+    ("Policy_Stringency", "Renewables_Deployment", "up", 2, 4),
+    ("Policy_Stringency", "Grid_Flexibility", "up", 2, 3),
+    ("Policy_Stringency", "Regulatory_Framework", "up", 2, 4),
+    ("Policy_Stringency", "Electrification_Demand", "up", 1, 2),  # uncertain magnitude in practice
+    ("Policy_Stringency", "Fossil_Price_Level", "down", 1, 2),  # long-run demand/price dampening
+
+    # Regulatory framework impacts are defined.
+    ("Regulatory_Framework", "Renewables_Deployment", "up", 2, 4),
+    ("Regulatory_Framework", "Investment_Level", "up", 1, 3),
+
+    # Renewables deployment impacts are defined.
+    ("Renewables_Deployment", "Grid_Flexibility", "up", 2, 4),
+    ("Renewables_Deployment", "Storage_Capacity", "up", 1, 3),
+    ("Renewables_Deployment", "Fossil_Price_Level", "down", 1, 2),
+    ("Renewables_Deployment", "Technology_Costs", "down", 1, 3),  # learning curve effects
+    ("Renewables_Deployment", "Electrification_Demand", "up", 2, 3),
+
+    # Grid flexibility impacts are defined.
+    ("Grid_Flexibility", "Renewables_Deployment", "up", 1, 3),  # feedback
+    ("Grid_Flexibility", "Electrification_Demand", "up", 2, 3),
+    ("Grid_Flexibility", "Storage_Capacity", "up", 1, 2),
+
+    # Storage capacity impacts are defined.
+    ("Storage_Capacity", "Grid_Flexibility", "up", 2, 4),
+    ("Storage_Capacity", "Renewables_Deployment", "up", 1, 3),
+
+    # Fossil price impacts are defined.
+    ("Fossil_Price_Level", "Renewables_Deployment", "up", 2, 3),
+    ("Fossil_Price_Level", "Electrification_Demand", "up", 2, 3),
+    ("Fossil_Price_Level", "Policy_Stringency", "up", 1, 2),  # price shocks can tighten policy
+
+    # Investment level impacts are defined.
+    ("Investment_Level", "Renewables_Deployment", "up", 2, 4),
+    ("Investment_Level", "Grid_Flexibility", "up", 1, 3),
+    ("Investment_Level", "Storage_Capacity", "up", 2, 3),
+    ("Investment_Level", "Technology_Costs", "down", 1, 2),  # scale effects
+
+    # Technology costs impacts are defined.
+    ("Technology_Costs", "Renewables_Deployment", "down", 2, 3),
+    ("Technology_Costs", "Investment_Level", "down", 1, 2),
+
+    # Electrification demand impacts are defined.
+    ("Electrification_Demand", "Grid_Flexibility", "up", 2, 4),
+    ("Electrification_Demand", "Policy_Stringency", "up", 1, 2),
+    ("Electrification_Demand", "Renewables_Deployment", "up", 1, 2),
+
+    # Public acceptance impacts are defined.
+    ("Public_Acceptance", "Policy_Stringency", "up", 1, 2),
+    ("Public_Acceptance", "Renewables_Deployment", "up", 1, 2),
+]
+
+DATASET_C10_IMPACTS, DATASET_C10_CONFIDENCE = expand_to_full_table(
+    descriptors=DATASET_C10_DESCRIPTORS,
+    influence_spec=DATASET_C10_INFLUENCE_SPEC,
+    default_impact=0,
+    default_confidence=3,
+)
+
+DATASET_C10_INITIAL_SCENARIO: Dict[str, str] = {
+    "Policy_Stringency": "Medium",
+    "Regulatory_Framework": "Moderate",
+    "Renewables_Deployment": "Moderate",
+    "Grid_Flexibility": "Medium",
+    "Storage_Capacity": "Moderate",
+    "Fossil_Price_Level": "Medium",
+    "Investment_Level": "Medium",
+    "Technology_Costs": "Moderate",
+    "Electrification_Demand": "Medium",
+    "Public_Acceptance": "Medium",
+}
+
+
+# -----------------------------------------
+# Dataset C15 (15 descriptors × 4 states - heavier workshop-scale example)
+# -----------------------------------------
+#
+# Rationale: A heavier workshop-scale dataset is provided so that rare events,
+# regime switching, and computational scaling can be exercised more visibly.
+#
+# Total scenario space: 4^15 = 1,073,741,824 scenarios (enumeration is not feasible).
+
+DATASET_C15_DESCRIPTORS: Dict[str, List[str]] = {
+    "Policy_Stringency": ["Low", "Medium", "High", "Very High"],
+    "Regulatory_Framework": ["Weak", "Moderate", "Strong", "Very Strong"],
+    "Renewables_Deployment": ["Slow", "Moderate", "Fast", "Very Fast"],
+    "Grid_Flexibility": ["Low", "Medium", "High", "Very High"],
+    "Storage_Capacity": ["Limited", "Moderate", "Extensive", "Very Extensive"],
+    "Fossil_Price_Level": ["Low", "Medium", "High", "Very High"],
+    "Investment_Level": ["Low", "Medium", "High", "Very High"],
+    "Technology_Costs": ["High", "Moderate", "Low", "Very Low"],
+    "Electrification_Demand": ["Low", "Medium", "High", "Very High"],
+    "Public_Acceptance": ["Low", "Medium", "High", "Very High"],
+    "Supply_Chain_Constraints": ["Severe", "Moderate", "Mild", "None"],
+    "Permitting_Speed": ["Slow", "Moderate", "Fast", "Very Fast"],
+    "Industrial_Demand": ["Low", "Medium", "High", "Very High"],
+    "Hydrogen_Deployment": ["Low", "Medium", "High", "Very High"],
+    "CCS_Deployment": ["Low", "Medium", "High", "Very High"],
+}
+
+# A sparse compact influence spec is defined (direction/strength/confidence).
+DATASET_C15_INFLUENCE_SPEC: List[Tuple[str, str, str, int, int]] = [
+    ("Policy_Stringency", "Regulatory_Framework", "up", 2, 4),
+    ("Policy_Stringency", "Permitting_Speed", "up", 2, 3),
+    ("Policy_Stringency", "Investment_Level", "up", 2, 3),
+    ("Policy_Stringency", "Renewables_Deployment", "up", 2, 4),
+    ("Policy_Stringency", "Electrification_Demand", "up", 2, 2),
+    ("Policy_Stringency", "Fossil_Price_Level", "down", 1, 2),
+
+    ("Regulatory_Framework", "Renewables_Deployment", "up", 2, 4),
+    ("Regulatory_Framework", "Grid_Flexibility", "up", 1, 3),
+
+    ("Permitting_Speed", "Renewables_Deployment", "up", 2, 3),
+    ("Permitting_Speed", "Storage_Capacity", "up", 1, 2),
+
+    ("Investment_Level", "Renewables_Deployment", "up", 2, 4),
+    ("Investment_Level", "Grid_Flexibility", "up", 2, 3),
+    ("Investment_Level", "Storage_Capacity", "up", 2, 3),
+    ("Investment_Level", "Technology_Costs", "down", 1, 2),
+    ("Investment_Level", "Hydrogen_Deployment", "up", 1, 2),
+    ("Investment_Level", "CCS_Deployment", "up", 1, 2),
+
+    ("Technology_Costs", "Renewables_Deployment", "down", 2, 3),
+    ("Technology_Costs", "Electrification_Demand", "down", 1, 2),
+    ("Technology_Costs", "Hydrogen_Deployment", "down", 1, 2),
+
+    ("Fossil_Price_Level", "Policy_Stringency", "up", 1, 2),
+    ("Fossil_Price_Level", "Electrification_Demand", "up", 2, 3),
+    ("Fossil_Price_Level", "Renewables_Deployment", "up", 1, 3),
+
+    ("Renewables_Deployment", "Grid_Flexibility", "up", 2, 4),
+    ("Renewables_Deployment", "Storage_Capacity", "up", 1, 3),
+    ("Renewables_Deployment", "Technology_Costs", "down", 1, 3),
+    ("Renewables_Deployment", "Electrification_Demand", "up", 2, 3),
+
+    ("Grid_Flexibility", "Electrification_Demand", "up", 2, 3),
+    ("Grid_Flexibility", "Renewables_Deployment", "up", 1, 3),
+    ("Grid_Flexibility", "Storage_Capacity", "up", 1, 2),
+
+    ("Storage_Capacity", "Grid_Flexibility", "up", 2, 4),
+    ("Storage_Capacity", "Renewables_Deployment", "up", 1, 3),
+
+    ("Supply_Chain_Constraints", "Renewables_Deployment", "down", 2, 2),
+    ("Supply_Chain_Constraints", "Storage_Capacity", "down", 1, 2),
+    ("Supply_Chain_Constraints", "Technology_Costs", "up", 1, 2),
+
+    ("Public_Acceptance", "Policy_Stringency", "up", 1, 2),
+    ("Public_Acceptance", "Permitting_Speed", "up", 1, 2),
+    ("Public_Acceptance", "Renewables_Deployment", "up", 1, 2),
+
+    ("Industrial_Demand", "Electrification_Demand", "up", 2, 3),
+    ("Hydrogen_Deployment", "Electrification_Demand", "down", 1, 2),
+    ("CCS_Deployment", "Policy_Stringency", "down", 1, 2),
+]
+
+DATASET_C15_IMPACTS, DATASET_C15_CONFIDENCE = expand_to_full_table(
+    descriptors=DATASET_C15_DESCRIPTORS,
+    influence_spec=DATASET_C15_INFLUENCE_SPEC,
+    default_impact=0,
+    default_confidence=3,
+)
+
+DATASET_C15_INITIAL_SCENARIO: Dict[str, str] = {
+    "Policy_Stringency": "Medium",
+    "Regulatory_Framework": "Moderate",
+    "Renewables_Deployment": "Moderate",
+    "Grid_Flexibility": "Medium",
+    "Storage_Capacity": "Moderate",
+    "Fossil_Price_Level": "Medium",
+    "Investment_Level": "Medium",
+    "Technology_Costs": "Moderate",
+    "Electrification_Demand": "Medium",
+    "Public_Acceptance": "Medium",
+    "Supply_Chain_Constraints": "Moderate",
+    "Permitting_Speed": "Moderate",
+    "Industrial_Demand": "Medium",
+    "Hydrogen_Deployment": "Medium",
+    "CCS_Deployment": "Medium",
+}
+
+DATASET_C15_THRESHOLD_RULE = {
+    "name": "Accelerated_Transition_Regime_C15",
+    "condition": lambda z: (
+        z.get("Policy_Stringency") in ("High", "Very High")
+        and z.get("Regulatory_Framework") in ("Strong", "Very Strong")
+        and z.get("Permitting_Speed") in ("Fast", "Very Fast")
+        and z.get("Investment_Level") in ("High", "Very High")
+    ),
+    "cim_modifier": "boost_accelerated_transition_c15",
+}
+
+DATASET_C15_NUMERIC_MAPPING = {
+    "Electrification_Demand": {
+        "Low": 0.25,
+        "Medium": 0.50,
+        "High": 0.70,
+        "Very High": 0.85,
+    },
+}
+
+
+DATASET_C15_POLICY_TRANSITION = _ordered_markov_transition(
+    DATASET_C15_DESCRIPTORS["Policy_Stringency"],
+    stay=0.62,
+    step=0.16,
+    step2=0.02,
+    up_bias=0.08,
+)
+DATASET_C15_FOSSIL_PRICE_TRANSITION = _ordered_markov_transition(
+    DATASET_C15_DESCRIPTORS["Fossil_Price_Level"],
+    stay=0.58,
+    step=0.18,
+    step2=0.02,
+    up_bias=0.0,
+)
+DATASET_C15_SUPPLY_CHAIN_TRANSITION = _ordered_markov_transition(
+    DATASET_C15_DESCRIPTORS["Supply_Chain_Constraints"],
+    stay=0.70,
+    step=0.14,
+    step2=0.02,
+    up_bias=-0.05,
+)
+
+
+def dataset_c15_cyclic_descriptors():
+    """
+    Cyclic descriptors for Dataset C15 are returned.
+    """
+    from cib.cyclic import CyclicDescriptor
+
+    return [
+        CyclicDescriptor("Policy_Stringency", DATASET_C15_POLICY_TRANSITION),
+        CyclicDescriptor("Fossil_Price_Level", DATASET_C15_FOSSIL_PRICE_TRANSITION),
+        CyclicDescriptor("Supply_Chain_Constraints", DATASET_C15_SUPPLY_CHAIN_TRANSITION),
+    ]
+
+
+def dataset_c15_threshold_rule_accelerated_transition():
+    """
+    A ThresholdRule matching DATASET_C15_THRESHOLD_RULE is constructed.
+    """
+    from cib.threshold import ThresholdRule
+
+    return ThresholdRule(
+        name=DATASET_C15_THRESHOLD_RULE["name"],
+        condition=lambda s: DATASET_C15_THRESHOLD_RULE["condition"](s.to_dict()),
+        modifier=dataset_c15_modifier_boost_accelerated_transition,
+    )
+
+
+def dataset_c15_modifier_boost_accelerated_transition(matrix):
+    """
+    Regime-switch modifier for Dataset C15.
+
+    Intuition: under an accelerated transition regime, coupling to renewables,
+    grid, storage, and electrification is strengthened.
+    """
+    import numpy as _np
+    from cib.core import CIBMatrix
+
+    if not isinstance(matrix, CIBMatrix):
+        raise ValueError("matrix must be a CIBMatrix")
+
+    out = CIBMatrix(matrix.descriptors)
+    out.set_impacts(dict(matrix.iter_impacts()))
+
+    def _bump(src_desc: str, src_state: str, tgt_desc: str, delta: float) -> None:
+        for tgt_state in out.descriptors[tgt_desc]:
+            base = out.get_impact(src_desc, src_state, tgt_desc, tgt_state)
+            states = out.descriptors[tgt_desc]
+            hi = states[-1]
+            lo = states[0]
+            if tgt_state == hi:
+                new = base + abs(delta)
+            elif len(states) >= 4 and tgt_state == states[-2]:
+                new = base + 0.5 * abs(delta)
+            elif tgt_state == lo:
+                new = base - abs(delta)
+            elif len(states) >= 4 and tgt_state == states[1]:
+                new = base - 0.5 * abs(delta)
+            else:
+                new = base
+            clipped = float(_np.clip(new, -3.0, 3.0))
+            if _np.isclose(clipped, float(base)):
+                continue
+            out.set_impact(src_desc, src_state, tgt_desc, tgt_state, clipped)
+
+    def _apply_at_top(src_desc: str, tgt_desc: str, delta: float) -> None:
+        src_states = out.descriptors[src_desc]
+        tops = [src_states[-1]]
+        if len(src_states) >= 4:
+            tops.append(src_states[-2])
+        for s in tops:
+            _bump(src_desc, s, tgt_desc, delta=delta)
+
+    _apply_at_top("Policy_Stringency", "Renewables_Deployment", delta=2.0)
+    _apply_at_top("Policy_Stringency", "Permitting_Speed", delta=1.0)
+    _apply_at_top("Regulatory_Framework", "Renewables_Deployment", delta=1.5)
+    _apply_at_top("Investment_Level", "Renewables_Deployment", delta=2.0)
+    _apply_at_top("Investment_Level", "Grid_Flexibility", delta=1.5)
+    _apply_at_top("Investment_Level", "Storage_Capacity", delta=1.5)
+    _apply_at_top("Renewables_Deployment", "Electrification_Demand", delta=2.0)
+    _apply_at_top("Grid_Flexibility", "Electrification_Demand", delta=1.5)
+
+    return out
+
+DATASET_C10_THRESHOLD_RULE = {
+    "name": "Accelerated_Transition_Regime",
+    "condition": lambda z: (
+        # An accelerated transition regime is triggered when strong policy, regulatory support,
+        # and investment are present (still requires High policy and at least Moderate regulatory).
+        z.get("Policy_Stringency") == "High"
+        and z.get("Regulatory_Framework") in ("Moderate", "Strong")
+        and z.get("Investment_Level") in ("Medium", "High")
+    ),
+    "cim_modifier": "boost_accelerated_transition",
+}
+
+# An optional numeric mapping is provided for fan charts and expected values (explicit and linear).
+DATASET_C10_NUMERIC_MAPPING = {
+    "Electrification_Demand": {
+        "Low": 0.30,
+        "Medium": 0.50,
+        "High": 0.70,
+    },
+    "Renewables_Deployment": {
+        "Slow": 0.20,
+        "Moderate": 0.50,
+        "Fast": 0.80,
+    },
+}
+
+
+DATASET_C10_POLICY_TRANSITION = _ordered_markov_transition(
+    DATASET_C10_DESCRIPTORS["Policy_Stringency"],
+    stay=0.65,
+    step=0.20,
+    step2=0.00,
+    up_bias=0.10,
+)
+
+DATASET_C10_FOSSIL_PRICE_TRANSITION = _ordered_markov_transition(
+    DATASET_C10_DESCRIPTORS["Fossil_Price_Level"],
+    stay=0.60,
+    step=0.25,
+    step2=0.00,
+    up_bias=0.0,
+)
+
+DATASET_C10_RENEWABLES_TRANSITION = _ordered_markov_transition(
+    DATASET_C10_DESCRIPTORS["Renewables_Deployment"],
+    stay=0.70,
+    step=0.20,
+    step2=0.00,
+    up_bias=0.08,
+)
+
+DATASET_C10_INVESTMENT_TRANSITION = _ordered_markov_transition(
+    DATASET_C10_DESCRIPTORS["Investment_Level"],
+    stay=0.68,
+    step=0.22,
+    step2=0.00,
+    up_bias=0.05,
+)
+
+
+def dataset_c10_cyclic_descriptors():
+    """
+    Cyclic descriptors for Dataset C10 (inertia + mild drift) are returned.
+    """
+    from cib.cyclic import CyclicDescriptor
+
+    return [
+        CyclicDescriptor("Policy_Stringency", DATASET_C10_POLICY_TRANSITION),
+        CyclicDescriptor("Fossil_Price_Level", DATASET_C10_FOSSIL_PRICE_TRANSITION),
+        CyclicDescriptor("Renewables_Deployment", DATASET_C10_RENEWABLES_TRANSITION),
+        CyclicDescriptor("Investment_Level", DATASET_C10_INVESTMENT_TRANSITION),
+    ]
+
+
+def dataset_c10_threshold_rule_accelerated_transition():
+    """
+    A ThresholdRule matching DATASET_C10_THRESHOLD_RULE is constructed.
+    """
+    from cib.threshold import ThresholdRule
+
+    return ThresholdRule(
+        name=DATASET_C10_THRESHOLD_RULE["name"],
+        condition=lambda s: DATASET_C10_THRESHOLD_RULE["condition"](s.to_dict()),
+        modifier=dataset_c10_modifier_boost_accelerated_transition,
+    )
+
+
+def dataset_c10_modifier_boost_accelerated_transition(matrix):
+    """
+    Regime-switch modifier for Dataset C10.
+
+    Intuition: under an "accelerated transition regime", the coupling from
+    policy, investment, and renewables to grid, storage, and electrification strengthens.
+    """
+    import numpy as _np
+    from cib.core import CIBMatrix
+
+    if not isinstance(matrix, CIBMatrix):
+        raise ValueError("matrix must be a CIBMatrix")
+
+    out = CIBMatrix(matrix.descriptors)
+    out.set_impacts(dict(matrix.iter_impacts()))
+
+    def _bump(src_desc: str, src_state: str, tgt_desc: str, delta: float) -> None:
+        for tgt_state in out.descriptors[tgt_desc]:
+            base = out.get_impact(src_desc, src_state, tgt_desc, tgt_state)
+            states = out.descriptors[tgt_desc]
+            hi = states[-1]
+            lo = states[0]
+            # Mass is smoothly biased upward for 3-state targets:
+            # - top state is boosted
+            # - bottom state is penalised
+            if tgt_state == hi:
+                new = base + abs(delta)
+            elif tgt_state == lo:
+                new = base - abs(delta)
+            else:
+                new = base
+            clipped = float(_np.clip(new, -3.0, 3.0))
+            if _np.isclose(clipped, float(base)):
+                continue
+            out.set_impact(src_desc, src_state, tgt_desc, tgt_state, clipped)
+
+    # Stronger policy, investment, and renewables push towards faster grid, storage, and electrification.
+    # The bump is applied at the highest source levels for 3-state variants.
+    def _apply_at_top(src_desc: str, tgt_desc: str, delta: float) -> None:
+        src_states = out.descriptors[src_desc]
+        top = src_states[-1]
+        _bump(src_desc, top, tgt_desc, delta=delta)
+
+    _apply_at_top("Policy_Stringency", "Renewables_Deployment", delta=1.5)
+    _apply_at_top("Policy_Stringency", "Grid_Flexibility", delta=1.5)
+    _apply_at_top("Policy_Stringency", "Storage_Capacity", delta=1.0)
+    _apply_at_top("Investment_Level", "Renewables_Deployment", delta=1.5)
+    _apply_at_top("Investment_Level", "Grid_Flexibility", delta=1.0)
+    _apply_at_top("Investment_Level", "Storage_Capacity", delta=1.5)
+    _apply_at_top("Renewables_Deployment", "Grid_Flexibility", delta=1.0)
+    _apply_at_top("Renewables_Deployment", "Storage_Capacity", delta=1.0)
+    _apply_at_top("Renewables_Deployment", "Electrification_Demand", delta=1.5)
+
+    return out
 
 
 def _save_cim_to_text_file(
@@ -818,20 +1301,44 @@ def _save_scenario_scoring_to_file(
         pass
 
 
-# CIM text file is automatically generated when module is imported.
-_save_cim_to_text_file(
-    descriptors=DATASET_B5_DESCRIPTORS,
-    impacts=DATASET_B5_IMPACTS,
-    confidence=DATASET_B5_CONFIDENCE,
-    dataset_name="DATASET_B5 (Energy Transition - 5 descriptors × 5 states)",
-    output_path="dataset_b5_cim.txt",
-)
+def write_example_dataset_artifacts(*, dataset: str = "B5") -> None:
+    """
+    Example dataset artefacts are written to `results/`.
 
-# Scenario scoring file is automatically generated when module is imported.
-_save_scenario_scoring_to_file(
-    descriptors=DATASET_B5_DESCRIPTORS,
-    impacts=DATASET_B5_IMPACTS,
-    initial_scenario=DATASET_B5_INITIAL_SCENARIO,
-    output_path="scenario_scoring_output.txt",
-)
+    This helper is provided so that import-time side effects are avoided.
+    """
+    key = str(dataset).strip().upper()
+    if key == "B5":
+        _save_cim_to_text_file(
+            descriptors=DATASET_B5_DESCRIPTORS,
+            impacts=DATASET_B5_IMPACTS,
+            confidence=DATASET_B5_CONFIDENCE,
+            dataset_name="DATASET_B5 (Energy Transition - 5 descriptors × 5 states)",
+            output_path="dataset_b5_cim.txt",
+        )
+        _save_scenario_scoring_to_file(
+            descriptors=DATASET_B5_DESCRIPTORS,
+            impacts=DATASET_B5_IMPACTS,
+            initial_scenario=DATASET_B5_INITIAL_SCENARIO,
+            output_path="scenario_scoring_output.txt",
+        )
+        return
+
+    if key == "C10":
+        _save_cim_to_text_file(
+            descriptors=DATASET_C10_DESCRIPTORS,
+            impacts=DATASET_C10_IMPACTS,
+            confidence=DATASET_C10_CONFIDENCE,
+            dataset_name="DATASET_C10 (Energy Transition - 10 descriptors × 3 states)",
+            output_path="dataset_c10_cim.txt",
+        )
+        _save_scenario_scoring_to_file(
+            descriptors=DATASET_C10_DESCRIPTORS,
+            impacts=DATASET_C10_IMPACTS,
+            initial_scenario=DATASET_C10_INITIAL_SCENARIO,
+            output_path="scenario_scoring_output_c10.txt",
+        )
+        return
+
+    raise ValueError("dataset must be 'B5' or 'C10'")
 

@@ -118,7 +118,7 @@ def save_to_csv(
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
 
-        for key, value in matrix._impacts.items():
+        for key, value in matrix.iter_impacts():
             src_desc, src_state, tgt_desc, tgt_state = key
             writer.writerow(
                 {
@@ -201,7 +201,7 @@ def save_to_json(matrix: CIBMatrix, path: str) -> None:
         "impacts": {},
     }
 
-    for key, value in matrix._impacts.items():
+    for key, value in matrix.iter_impacts():
         src_desc, src_state, tgt_desc, tgt_state = key
         key_str = f"{src_desc}|{src_state}|{tgt_desc}|{tgt_state}"
         data["impacts"][key_str] = value

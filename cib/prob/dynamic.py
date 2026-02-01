@@ -11,7 +11,11 @@ class DynamicProbabilisticCIA:
     """
     Dynamic wrapper for per-period probabilistic CIA models.
 
-    In Phase-1 implementation, "refit" mode is supported: each period is fitted independently.
+    Two dynamic modes are supported:
+
+    - mode="refit": each period is fitted independently.
+    - mode="predict-update": the fitted distribution from period t-1 is used as a KL baseline
+      for period t (regularised predict–update).
     """
 
     periods: Sequence[int]
@@ -24,15 +28,30 @@ class DynamicProbabilisticCIA:
         **fit_opts: object,
     ) -> Dict[int, JointDistribution]:
         mode = str(mode).strip().lower()
-        if mode != "refit":
-            raise NotImplementedError(
-                "Only mode='refit' is implemented in Phase 1. "
-                "predict-update is planned next."
-            )
+        if mode not in {"refit", "predict-update", "predict_update"}:
+            raise ValueError(f"Unknown mode: {mode!r}")
         out: Dict[int, JointDistribution] = {}
+        prev: Optional[JointDistribution] = None
         for t in self.periods:
             if int(t) not in self.models_by_period:
                 raise ValueError(f"Missing model for period {int(t)}")
-            out[int(t)] = self.models_by_period[int(t)].fit_joint(**fit_opts)
+            model = self.models_by_period[int(t)]
+            if mode == "refit":
+                out[int(t)] = model.fit_joint(**fit_opts)
+                prev = out[int(t)]
+                continue
+
+            # Predict–update: previous period distribution is used as KL baseline.
+            if prev is None:
+                out[int(t)] = model.fit_joint(**fit_opts)
+                prev = out[int(t)]
+                continue
+
+            opts = dict(fit_opts)
+            opts["kl_baseline"] = prev.p
+            # A small epsilon is used by default to avoid zeros in the baseline distribution.
+            opts.setdefault("kl_baseline_eps", 1e-12)
+            out[int(t)] = model.fit_joint(**opts)
+            prev = out[int(t)]
         return out
 

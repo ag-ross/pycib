@@ -31,9 +31,9 @@ class ScenarioDiagnostics:
 
     def brink_descriptors(self, threshold: float = 0.0) -> List[str]:
         """
-        Return descriptors at or below the margin threshold.
+        Descriptors at or below the margin threshold are returned.
 
-        This is useful for identifying descriptors “on the brink” of switching.
+        This is useful for identifying descriptors that are on the brink of switching.
         """
         threshold = float(threshold)
         brink: List[str] = []
@@ -44,8 +44,13 @@ class ScenarioDiagnostics:
             chosen = bal.get(chosen_state)
             if chosen is None:
                 continue
-            best_alt = max(float(v) for v in bal.values())
-            margin = float(chosen) - float(best_alt)
+            # The best alternative is used (chosen state is excluded).
+            best_alt = float("-inf")
+            for s, v in bal.items():
+                if str(s) == str(chosen_state):
+                    continue
+                best_alt = max(best_alt, float(v))
+            margin = 0.0 if best_alt == float("-inf") else float(chosen) - float(best_alt)
             if margin <= threshold:
                 brink.append(d)
         return brink
@@ -55,7 +60,7 @@ def scenario_diagnostics(
     scenario: Scenario, matrix: CIBMatrix
 ) -> ScenarioDiagnostics:
     """
-    Compute standard CIB diagnostics for a scenario.
+    Standard CIB diagnostics for a scenario are computed.
 
     Args:
         scenario: Scenario to analyze.
@@ -83,8 +88,19 @@ def scenario_diagnostics(
         chosen_states[d] = chosen_state
         chosen_score = float(ib.get_score(d, chosen_state))
         total += chosen_score
-        best = max(float(ib.get_score(d, s)) for s in states)
-        margins.append(chosen_score - best)
+        # Margin to switching is defined against the best alternative state.
+        # This makes the margin strictly positive for strongly-consistent descriptors,
+        # 0.0 for ties at the maximum, and negative for inconsistent descriptors.
+        best_alt = float("-inf")
+        for s in states:
+            if s == chosen_state:
+                continue
+            best_alt = max(best_alt, float(ib.get_score(d, s)))
+        if best_alt == float("-inf"):
+            # Degenerate descriptor (single state): no alternative exists.
+            margins.append(0.0)
+        else:
+            margins.append(chosen_score - best_alt)
 
     margin = float(min(margins)) if margins else 0.0
     diag = ScenarioDiagnostics(
@@ -105,7 +121,7 @@ def impact_label(
     strong_threshold: float = 1.5,
 ) -> str:
     """
-    Map a numeric impact value to a qualitative label.
+    A numeric impact value is mapped to a qualitative label.
 
     Args:
         value: Numeric impact value to label.
@@ -145,7 +161,7 @@ def judgment_section_labels(
     strong_threshold: float = 1.5,
 ) -> Dict[Tuple[str, str], str]:
     """
-    Label a judgment section (src_desc -> tgt_desc) with qualitative labels.
+    A judgement section (src_desc -> tgt_desc) is labelled with qualitative labels.
 
     Args:
         matrix: CIB matrix containing impact relationships.

@@ -168,6 +168,7 @@ class DynamicCIB:
         max_iterations: int = 1000,
         tie_break: str = "deterministic_first",
         equilibrium_mode: Literal["none", "relax_unshocked"] = "none",
+        diagnostics: Optional[Dict[str, List[object]]] = None,
     ) -> TransformationPathway:
         """
         A single discrete pathway across periods is simulated.
@@ -196,6 +197,9 @@ class DynamicCIB:
                 `"relax_unshocked"`, an unshocked relaxation is performed after the realised
                 attractor is selected, and `equilibrium_scenarios` is populated on the returned
                 pathway.
+            diagnostics: Optional diagnostics sink. When provided, per-period iteration counts
+                and cycle flags are appended to the provided lists. When threshold rules are
+                configured, the applied rule names are recorded per period.
 
         Returns:
             A `TransformationPathway` containing the realised per-period scenarios, and optionally
@@ -259,6 +263,9 @@ class DynamicCIB:
             # Note: for period_idx > 0, cyclic descriptors (if configured) have already
             # advanced at the start of the period, so thresholds “see” the post-cyclic
             # scenario state.
+            if diagnostics is not None and self.threshold_rules:
+                applied = [r.name for r in self.threshold_rules if r.condition(current)]
+                diagnostics.setdefault("threshold_rules_applied", []).append(list(applied))
             matrix_t = self._apply_thresholds(matrix_period, current)
 
             op = succession_operator
@@ -285,6 +292,9 @@ class DynamicCIB:
             result = op.find_attractor(
                 current, matrix_t, max_iterations=max_iterations
             )
+            if diagnostics is not None:
+                diagnostics.setdefault("iterations", []).append(int(result.iterations))
+                diagnostics.setdefault("is_cycle", []).append(bool(result.is_cycle))
 
             chosen: Scenario
             if result.is_cycle:
@@ -312,6 +322,9 @@ class DynamicCIB:
                 eq_result = eq_op.find_attractor(
                     eq_start, matrix_t, max_iterations=max_iterations
                 )
+                if diagnostics is not None:
+                    diagnostics.setdefault("equilibrium_iterations", []).append(int(eq_result.iterations))
+                    diagnostics.setdefault("equilibrium_is_cycle", []).append(bool(eq_result.is_cycle))
                 if eq_result.is_cycle:
                     eq_cycle = eq_result.attractor
                     assert isinstance(eq_cycle, list)

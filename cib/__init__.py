@@ -37,6 +37,7 @@ from cib.succession import (
     SuccessionOperator,
 )
 from cib.uncertainty import ConfidenceMapper, UncertainCIBMatrix
+from cib.reduction import reduce_matrix, bin_states, map_scenario_to_reduced
 from cib.utils import (
     load_from_csv,
     load_from_json,
@@ -60,6 +61,31 @@ from cib.transformation_matrix import (
     PerturbationInfo,
     TransformationMatrix,
     TransformationMatrixBuilder,
+)
+from cib.attribution import (
+    Contribution,
+    DescriptorAttribution,
+    FlipCandidate,
+    ScenarioAttribution,
+    attribute_scenario,
+    flip_candidates_for_descriptor,
+)
+from cib.rare_events import (
+    BinomialInterval,
+    EventRateDiagnostics,
+    event_rate_diagnostics,
+    min_switch_margin,
+    near_miss_rate,
+    wilson_interval_from_count,
+)
+from cib.sensitivity import (
+    DriverSpec,
+    GlobalSensitivityReport,
+    ImportanceSummary,
+    OutcomeSensitivity,
+    OutcomeSpec,
+    compute_global_sensitivity_attractors,
+    compute_global_sensitivity_dynamic,
 )
 
 __all__ = [
@@ -107,4 +133,26 @@ __all__ = [
     "TransformationMatrix",
     "TransformationMatrixBuilder",
     "PerturbationInfo",
+    "reduce_matrix",
+    "bin_states",
+    "map_scenario_to_reduced",
+    "Contribution",
+    "DescriptorAttribution",
+    "FlipCandidate",
+    "ScenarioAttribution",
+    "attribute_scenario",
+    "flip_candidates_for_descriptor",
+    "BinomialInterval",
+    "EventRateDiagnostics",
+    "wilson_interval_from_count",
+    "event_rate_diagnostics",
+    "min_switch_margin",
+    "near_miss_rate",
+    "DriverSpec",
+    "OutcomeSpec",
+    "ImportanceSummary",
+    "OutcomeSensitivity",
+    "GlobalSensitivityReport",
+    "compute_global_sensitivity_dynamic",
+    "compute_global_sensitivity_attractors",
 ]

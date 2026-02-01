@@ -159,6 +159,15 @@ class CIBMatrix:
         key = (src_desc, src_state, tgt_desc, tgt_state)
         return self._impacts.get(key, 0.0)
 
+    def iter_impacts(self):
+        """
+        Iterate over explicitly stored non-zero impacts.
+
+        Returns:
+            An iterator over ((src_desc, src_state, tgt_desc, tgt_state), value) pairs.
+        """
+        return self._impacts.items()
+
     def calculate_impact_score(
         self, scenario: Scenario, descriptor: str, state: str
     ) -> float:
@@ -557,7 +566,9 @@ class ConsistencyChecker:
 
     @staticmethod
     def check_consistency(
-        scenario: Scenario, matrix: CIBMatrix
+        scenario: Scenario,
+        matrix: CIBMatrix,
+        use_fast: bool = False,
     ) -> bool:
         """
         Verify if a scenario satisfies the consistency condition.
@@ -569,6 +580,16 @@ class ConsistencyChecker:
         Returns:
             True if scenario is consistent, False otherwise.
         """
+        if bool(use_fast):
+            try:
+                from cib.fast_scoring import FastCIBScorer
+
+                scorer = FastCIBScorer.from_matrix(matrix)
+                return bool(scorer.is_consistent(scorer.scenario_to_indices(scenario)))
+            except Exception:
+                # The reference implementation is used as a safe fallback.
+                pass
+
         for descriptor in matrix.descriptors:
             current_state = scenario.get_state(descriptor)
             balance = matrix.calculate_impact_balance(scenario, descriptor)

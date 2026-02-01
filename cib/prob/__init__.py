@@ -10,8 +10,12 @@ multipliers.
 
 from cib.prob.types import FactorSpec, ProbScenario, ScenarioIndex
 from cib.prob.model import ProbabilisticCIAModel, JointDistribution
+from cib.prob.approx import ApproxJointDistribution
 from cib.prob.diagnostics import DiagnosticsReport
 from cib.prob.dynamic import DynamicProbabilisticCIA
+from cib.prob.fit_report import FeasibilityAdjustment, FitReport
+from cib.prob.graph import RelevanceSpec
+from cib.prob.risk_bounds import RiskBoundsResult, event_probability_bounds
 
 __all__ = [
     "FactorSpec",
@@ -19,7 +23,13 @@ __all__ = [
     "ScenarioIndex",
     "ProbabilisticCIAModel",
     "JointDistribution",
+    "ApproxJointDistribution",
     "DiagnosticsReport",
     "DynamicProbabilisticCIA",
+    "FeasibilityAdjustment",
+    "FitReport",
+    "RelevanceSpec",
+    "RiskBoundsResult",
+    "event_probability_bounds",
 ]
 
