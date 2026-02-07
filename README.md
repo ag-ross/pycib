@@ -265,7 +265,7 @@ Details are provided in the LICENSE file.
 
 ### Cite as:
 
-Ross, A. G. (2025). A Python implementation of Cross-Impact Balance analysis with uncertainty quantification and robustness testing capabilities. [10.5281/zenodo.18367511](https://doi.org/10.5281/zenodo.18367511)  
+Ross, A. G. (2025). PyCIB Cross-Impact Balance (CIB) Analysis Package. [10.5281/zenodo.18367511](https://doi.org/10.5281/zenodo.18367511)  
 
 ## References
 
