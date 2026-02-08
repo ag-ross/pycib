@@ -30,6 +30,13 @@ class DynamicProbabilisticCIA:
         mode = str(mode).strip().lower()
         if mode not in {"refit", "predict-update", "predict_update"}:
             raise ValueError(f"Unknown mode: {mode!r}")
+        if mode in {"predict-update", "predict_update"}:
+            method = str(fit_opts.get("method", "direct")).strip().lower()
+            if method != "direct":
+                raise ValueError(
+                    "Predict–update mode is supported only for method='direct' "
+                    "(a dense JointDistribution is required for the KL baseline)."
+                )
         out: Dict[int, JointDistribution] = {}
         prev: Optional[JointDistribution] = None
         for t in self.periods:
