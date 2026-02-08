@@ -150,8 +150,9 @@ class BranchingPathwayBuilder:
     Notes:
     - Cyclic descriptors are treated as exogenous/inertial between periods and are
       locked during within-period succession, consistent with `DynamicCIB`.
-    - Threshold rules are evaluated on the *current* period scenario and modify
-      the active matrix used for the *next* period transition.
+    - The active CIM for period t+1 is determined by the scenario at the start
+      of period t+1 (after cyclic transitions). Threshold rules are evaluated on
+      that post-cyclic scenario so that behaviour matches `DynamicCIB.simulate_path()`.
 
     Enumeration vs sampling:
         The builder automatically chooses between enumeration and sampling modes
@@ -160,7 +161,7 @@ class BranchingPathwayBuilder:
         - Enumeration mode (scenario space size <= max_states_to_enumerate):
           - Enumerates all consistent scenarios for a deterministic base matrix
           - Ignores `judgment_sigma_scale_by_period` and `structural_sigma`
-          - Produces complete, deterministic results
+          - Produces complete results for the CIB-consistent scenario set, conditional on the realised cyclic transitions
 
         - Sampling mode (scenario space size > max_states_to_enumerate):
           - Estimates transition distributions via Monte Carlo sampling
@@ -180,6 +181,7 @@ class BranchingPathwayBuilder:
         initial: Mapping[str, str],
         cyclic_descriptors: Optional[Sequence[CyclicDescriptor]] = None,
         threshold_rules: Optional[Sequence[ThresholdRule]] = None,
+        threshold_match_policy: Literal["first_match", "all_matches"] = "all_matches",
         succession_operator: Optional[SuccessionOperator] = None,
         node_mode: Literal["equilibrium", "realized"] = "equilibrium",
         max_states_to_enumerate: int = 20_000,
@@ -208,6 +210,10 @@ class BranchingPathwayBuilder:
             initial: Initial scenario as a descriptor -> state mapping.
             cyclic_descriptors: Optional cyclic descriptors (treated as exogenous/inertial).
             threshold_rules: Optional threshold rules applied between periods.
+            threshold_match_policy: Threshold rule matching policy. When set to
+                "first_match", only the first matching rule is applied. When set to
+                "all_matches", modifiers for matching rules are applied sequentially
+                (order matters).
             succession_operator: Succession operator used for within-period attractor finding.
             node_mode: Node representation mode. When set to `"equilibrium"`, an unshocked
                 relaxation is performed after dynamic-shock succession so that nodes remain
@@ -246,6 +252,8 @@ class BranchingPathwayBuilder:
             raise ValueError("max_nodes_per_period must be positive when provided")
         if node_mode not in {"equilibrium", "realized"}:
             raise ValueError("node_mode must be 'equilibrium' or 'realized'")
+        if threshold_match_policy not in {"first_match", "all_matches"}:
+            raise ValueError("threshold_match_policy must be 'first_match' or 'all_matches'")
         if prune_policy not in {"incoming_mass", "per_parent_topk", "min_edge_weight"}:
             raise ValueError("prune_policy is not recognised")
         if prune_policy == "per_parent_topk" and (per_parent_top_k is None or int(per_parent_top_k) <= 0):
@@ -260,6 +268,7 @@ class BranchingPathwayBuilder:
         for cd in self.cyclic_descriptors:
             cd.validate()
         self.threshold_rules = list(threshold_rules or [])
+        self.threshold_match_policy = str(threshold_match_policy)
         self.succession_operator = succession_operator or GlobalSuccession()
         self.node_mode = str(node_mode)
 
@@ -289,6 +298,8 @@ class BranchingPathwayBuilder:
         for rule in self.threshold_rules:
             if rule.condition(scenario):
                 active = rule.modifier(active)
+                if self.threshold_match_policy == "first_match":
+                    break
         return active
 
     def _apply_cyclic_transitions(
@@ -317,12 +328,16 @@ class BranchingPathwayBuilder:
     def _sample_active_matrix_for_next_period(
         self,
         *,
-        parent_scenario: Scenario,
+        scenario_for_threshold: Scenario,
         next_period_idx: int,
         seed: int,
     ) -> CIBMatrix:
         """
         Sample/perturb the matrix for the next period (optional), then apply thresholds.
+
+        The scenario passed in must be the state at the start of the next period
+        (after cyclic transitions). Threshold rules are evaluated on this scenario
+        so that the active CIM is chosen consistently with `DynamicCIB.simulate_path()`.
         """
         m = self._sample_matrix_for_period(period_idx=next_period_idx, seed=seed)
 
@@ -331,8 +346,7 @@ class BranchingPathwayBuilder:
             sm.add_structural_shocks(sigma=float(self.structural_sigma))
             m = sm.sample_shocked_matrix(int(seed) + 10_000 + int(next_period_idx))
 
-        # Thresholds are evaluated on the parent scenario (t), producing the active CIM for t+1.
-        return self._apply_thresholds(m, parent_scenario)
+        return self._apply_thresholds(m, scenario_for_threshold)
 
     def _find_attractor(
         self,
@@ -441,7 +455,9 @@ class BranchingPathwayBuilder:
                     )
                     next_state = self._apply_cyclic_transitions(parent_state, rng)
                     locked = self._lock_map(next_state)
-                    active = self._apply_thresholds(self.base_matrix, parent)
+                    active = self._apply_thresholds(
+                        self.base_matrix, Scenario(next_state, self.base_matrix)
+                    )
 
                     # Consistent scenarios are enumerated with cyclic descriptors fixed.
                     candidates = _enumerate_consistent_with_locks(matrix=active, locked=locked)
@@ -478,7 +494,7 @@ class BranchingPathwayBuilder:
                     locked = self._lock_map(next_state)
 
                     active = self._sample_active_matrix_for_next_period(
-                        parent_scenario=parent,
+                        scenario_for_threshold=Scenario(next_state, self.base_matrix),
                         next_period_idx=p_idx + 1,
                         seed=int(seeds["judgment_uncertainty_seed"]),
                     )
