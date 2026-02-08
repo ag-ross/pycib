@@ -75,6 +75,7 @@ class DynamicCIB:
 
     base_matrix: CIBMatrix
     periods: List[int]
+    threshold_match_policy: Literal["first_match", "all_matches"] = "all_matches"
 
     def __post_init__(self) -> None:
         """
@@ -85,6 +86,8 @@ class DynamicCIB:
         """
         if not self.periods:
             raise ValueError("periods cannot be empty")
+        if self.threshold_match_policy not in {"first_match", "all_matches"}:
+            raise ValueError("threshold_match_policy must be 'first_match' or 'all_matches'")
         self.threshold_rules: List[ThresholdRule] = []
         self.cyclic_descriptors: Dict[str, CyclicDescriptor] = {}
 
@@ -94,7 +97,8 @@ class DynamicCIB:
 
         Args:
             rule: Threshold rule to add. Rules are evaluated in order during
-                simulation, and the first matching rule's modifier is applied.
+                simulation. When multiple rules match, application is controlled
+                by `threshold_match_policy`.
         """
         self.threshold_rules.append(rule)
 
@@ -129,6 +133,8 @@ class DynamicCIB:
         for rule in self.threshold_rules:
             if rule.condition(scenario):
                 active = rule.modifier(active)
+                if self.threshold_match_policy == "first_match":
+                    break
         return active
 
     def _apply_cyclic_transitions(
