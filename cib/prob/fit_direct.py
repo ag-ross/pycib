@@ -127,7 +127,56 @@ def fit_joint_direct(
 
     # Fast path: if there are no multiplier constraints, the independent baseline implied by marginals is already a valid joint distribution.
     if not multipliers:
-        return _product_baseline(index, marginals)
+        p = _product_baseline(index, marginals)
+        if not return_report:
+            return p
+
+        C, d = _build_linear_constraints(index, marginals)
+        lin_res = C @ p - d
+        max_abs_marg_res = float(np.max(np.abs(lin_res))) if lin_res.size else 0.0
+
+        kl_weight = float(kl_weight)
+        use_kl = kl_weight > 0.0
+        if use_kl:
+            if kl_baseline is None:
+                q = _product_baseline(index, marginals)
+            else:
+                q = np.asarray(kl_baseline, dtype=float)
+                if q.ndim != 1 or int(q.shape[0]) != int(index.size):
+                    raise ValueError("KL baseline has wrong shape")
+                if float(kl_baseline_eps) > 0.0:
+                    q = np.maximum(q, float(kl_baseline_eps))
+                qs = float(np.sum(q))
+                if qs <= 0.0:
+                    raise ValueError("KL baseline is degenerate (sum <= 0)")
+                q = q / qs
+            if np.any(q <= 0.0):
+                raise ValueError("KL baseline has zeros; cannot use KL regularisation")
+            with np.errstate(divide="ignore", over="ignore", invalid="ignore", under="ignore"):
+                kl_val = float(np.sum(p * (np.log(p) - np.log(q))))
+            if not np.isfinite(kl_val):
+                kl_val = float("nan")
+        else:
+            kl_val = 0.0
+
+        report = FitReport(
+            method="direct",
+            solver="fast_path",
+            success=True,
+            message="No multipliers were provided; the independent baseline implied by marginals was returned.",
+            n_iterations=None,
+            solver_status=None,
+            objective_value=float(float(kl_weight) * float(kl_val)),
+            wls_value=0.0,
+            kl_value=float(kl_val),
+            kl_weight=float(kl_weight),
+            max_abs_marginal_residual=float(max_abs_marg_res),
+            max_abs_pairwise_residual=0.0,
+            weight_by_target=bool(weight_by_target),
+            feasibility_mode=str(feasibility_mode),
+            feasibility_adjustments=tuple(),
+        )
+        return p, report
 
     feasibility_mode = str(feasibility_mode).strip().lower()
     if feasibility_mode not in {"strict", "repair"}:
