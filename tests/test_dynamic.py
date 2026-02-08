@@ -86,6 +86,53 @@ class TestDynamicCIB:
 
         assert final_state["B"] == "High"
 
+    def test_threshold_match_policy_controls_multiple_rule_application(self) -> None:
+        descriptors = {"A": ["Low", "High"], "B": ["Low", "High"]}
+        m = CIBMatrix(descriptors)
+
+        # A is stabilised to High regardless of B.
+        m.set_impact("B", "Low", "A", "Low", 0.0)
+        m.set_impact("B", "Low", "A", "High", 1.0)
+        m.set_impact("B", "High", "A", "Low", 0.0)
+        m.set_impact("B", "High", "A", "High", 1.0)
+
+        def modifier_b_high(base: CIBMatrix) -> CIBMatrix:
+            out = CIBMatrix(base.descriptors)
+            out.set_impacts(dict(base._impacts))  # type: ignore[attr-defined]
+            out.set_impact("A", "High", "B", "Low", 0.0)
+            out.set_impact("A", "High", "B", "High", 1.0)
+            return out
+
+        def modifier_b_low(base: CIBMatrix) -> CIBMatrix:
+            out = CIBMatrix(base.descriptors)
+            out.set_impacts(dict(base._impacts))  # type: ignore[attr-defined]
+            out.set_impact("A", "High", "B", "Low", 1.0)
+            out.set_impact("A", "High", "B", "High", 0.0)
+            return out
+
+        rule1 = ThresholdRule(
+            name="Rule1_IfAHighThenBHigh",
+            condition=lambda s: s.get_state("A") == "High",
+            modifier=modifier_b_high,
+        )
+        rule2 = ThresholdRule(
+            name="Rule2_IfAHighThenBLow",
+            condition=lambda s: s.get_state("A") == "High",
+            modifier=modifier_b_low,
+        )
+
+        dyn_first = DynamicCIB(m, periods=[1], threshold_match_policy="first_match")
+        dyn_first.add_threshold_rule(rule1)
+        dyn_first.add_threshold_rule(rule2)
+        p_first = dyn_first.simulate_path(initial={"A": "High", "B": "Low"}, seed=123)
+        assert p_first.scenarios[0].to_dict()["B"] == "High"
+
+        dyn_all = DynamicCIB(m, periods=[1], threshold_match_policy="all_matches")
+        dyn_all.add_threshold_rule(rule1)
+        dyn_all.add_threshold_rule(rule2)
+        p_all = dyn_all.simulate_path(initial={"A": "High", "B": "Low"}, seed=123)
+        assert p_all.scenarios[0].to_dict()["B"] == "Low"
+
     def test_ensemble_reproducible(self) -> None:
         descriptors = {"A": ["Low", "High"], "B": ["Low", "High"]}
         m = CIBMatrix(descriptors)
